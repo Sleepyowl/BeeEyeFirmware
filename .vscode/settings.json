@@ -1,0 +1,14 @@
+{
+    "files.associations": {
+        "kernel.h": "c",
+        "uart_print.h": "c",
+        "gpio.h": "c",
+        "w1.h": "c",
+        "rtc.h": "c",
+        "onewire.h": "c",
+        "scan.h": "c",
+        "ble_client.h": "c",
+        "compare": "c",
+        "cstdarg": "c"
+    }
+}

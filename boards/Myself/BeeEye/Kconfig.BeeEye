@@ -1,0 +1,2 @@
+config BOARD_BEEEYE
+	select SOC_NRF52811_QFAA

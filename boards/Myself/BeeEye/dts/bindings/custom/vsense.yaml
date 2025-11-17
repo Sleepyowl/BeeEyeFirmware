@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+description: Custom voltage sense peripheral
+
+compatible: "custom,vsense"
+
+properties:
+  label:
+    type: string
+    required: false
+    description: Human-readable device label
+    
+  enable-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO to enable voltage divider
+
+  io-channels:
+    type: phandle-array
+    required: true
+    description: ADC channel used for voltage sense

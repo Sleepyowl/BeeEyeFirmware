@@ -1,0 +1,10 @@
+identifier: BeeEye/nrf52811
+name: BeeEye-v0.2 Board
+vendor: Myself
+type: mcu
+arch: arm
+ram: 24
+flash: 192
+toolchain:
+  - zephyr
+supported: []
