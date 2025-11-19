@@ -9,8 +9,11 @@
 #include <stdio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/logging/log.h>
 #include <hal/nrf_gpio.h>
 
+
+LOG_MODULE_REGISTER(app_main, LOG_LEVEL_DBG);
 
 #define LED0_NODE DT_NODELABEL(status_led)
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
@@ -23,16 +26,15 @@ void fillMeasureFromSensor(struct Measure* measure, struct Sensor* sensor);
 
 int main(void)
 {
-	// k_msleep(3000);
 	int ret = 0;
 
 	if (!gpio_is_ready_dt(&led)) {
+		LOG_ERR("GPIO is not ready");
 		return 0;
 	}
 
 
 	ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
-	
 	if (ret < 0) {
 		return 0;
 	} 
@@ -53,32 +55,32 @@ int main(void)
 
 	ret = intinitialize_rtc();
 	if(ret) {
-		uart_printf("RTC init failed: %d\n", ret);
+		LOG_ERR("RTC init failed: %d", ret);
 	} else {
-		uart_printf("RTC OK\n");
+		LOG_INF("RTC OK");
 	}
 
 	// Start BLE
 	ret = ble_client_start(60, 30);
 	if(ret) {
-		uart_printf("BLE client init failed: %d\n", ret);
+		LOG_ERR("BLE client init failed: %d", ret);
 	} else {
-		uart_printf("BLE OK\n");
+		LOG_INF("BLE OK");
 	}
 
 	k_msleep(100);
 
 	ret = init_lora();
 	if(ret){
-		uart_printf("LoRa init failed: %d\n", ret);
+		LOG_ERR("LoRa init failed: %d", ret);
 	} else {
-		uart_printf("LoRa OK\n");
+		LOG_INF("LoRa OK\n");
 	}
 
 	// Send banner
 	ret=lora_transmit_text("BeeEye v0.2-nrf");
 	if(ret) {
-		uart_printf("LoRa TX failed: %d\n", ret);
+		LOG_ERR("LoRa TX failed: %d\n", ret);
 	}
 
 	uint64_t start = k_uptime_get();
@@ -91,23 +93,23 @@ int main(void)
 
 		if (t_stop_hifreq != 0 && t_stop_hifreq <= now) {
 			t_stop_hifreq = 0;
-			uart_printf("Stopping ble scan, sensors found so far = %d\n", ble_get_sensor_count());
+			LOG_INF("Stopping ble scan, sensors found so far = %d", ble_get_sensor_count());
 			ble_client_stop();
 			// uart_printf("Switching to low-freq ble scan, sensors found so far = %d\n", ble_get_sensor_count());
 			// ble_client_start(500,50); // low freq
 
 			t_start_hifreq = ble_client_get_next_sensor_window();
 			if(t_start_hifreq == 0) {
-				uart_printf("No devices detected, scheduling next hi-freq scan in 2 minutes\n");
+				LOG_WRN("No devices detected, scheduling next hi-freq scan in 2 minutes");
 				t_start_hifreq = now + 120000;
 			} else {
-				uart_printf("Next hi-freq in %d seconds\n", (int)((t_start_hifreq - now) / 1000));
+				LOG_INF("Next hi-freq in %d seconds", (int)((t_start_hifreq - now) / 1000));
 			}
 		}
 
 		if (t_start_hifreq != 0 && t_start_hifreq <= now) {
 			t_start_hifreq = 0;
-			uart_printf("Switching to high-freq ble scan\n");
+			LOG_INF("Switching to high-freq ble scan");
 			ble_client_start(60, 30); // high freq
 			t_stop_hifreq = now + 1500; // scan with high freq for 1.5s (we start 0.5s earlier)
 		}
@@ -133,7 +135,7 @@ int main(void)
 			}
 			
 
-			uart_printf("Sending %d measures\n", measures_to_transmit);
+			LOG_INF("Sending %d measures", measures_to_transmit);
 			lora_transmit_measures(measures, measures_to_transmit);
 			t_start_transmit = now + 300000; // schedule LoRa transmit every 5 minutes
 		}

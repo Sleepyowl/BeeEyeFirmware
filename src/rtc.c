@@ -1,5 +1,6 @@
 #include "uart_print.h"
 
+#include <zephyr/logging/log.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/sys/timeutil.h>
@@ -15,37 +16,11 @@
 #include <time.h>
 #include <stdint.h>
 
-
-int blink(int count, int duration);
-int megablink(int countA, int countB, int spacing);
-
-// #define I2C_NODE       DT_NODELABEL(i2c0)
-// #define RV3028_NODE    DT_NODELABEL(rv3028)
-
-// static const struct device *i2c0 = DEVICE_DT_GET(I2C_NODE);
-static const struct device *rtc = DEVICE_DT_GET_ONE(microcrystal_rv3028);
-
-// static const struct device *rtc = DEVICE_DT_GET(RV3028_NODE);
-
-// static const struct gpio_dt_spec btn = GPIO_DT_SPEC_GET(DT_ALIAS(sw0), gpios);
-
-//DEVICE_DT_GET(RV3028_NODE);
-
-/* INT (~INT) GPIO from DTS */
-// #define RV3028_INT_NODE  DT_GPIO_CTLR(RV3028_NODE, int_gpios)
-// #define RV3028_INT_PIN   DT_GPIO_PIN(RV3028_NODE, int_gpios)
-// #define RV3028_INT_FLAGS DT_GPIO_FLAGS(RV3028_NODE, int_gpios)
-// static const struct device *const int_gpio = DEVICE_DT_GET(RV3028_INT_NODE);
-
-
+LOG_MODULE_REGISTER(app_rtc);
+static const struct device *rtc = DEVICE_DT_GET(DT_NODELABEL(rv3028));
 
 int intinitialize_rtc(void)
 {
-    if (!rtc) {
-        uart_printf("RTC device is NULL");
-        return -ENODEV;
-    }
-
     int ret;
     
     // ret = device_init(rtc);
@@ -55,7 +30,7 @@ int intinitialize_rtc(void)
     // }
     
     if (!device_is_ready(rtc)) {
-        uart_printf("RTC device is not ready\n");
+        LOG_ERR("RTC is not ready");
         return -ENODEV;
     }
 
@@ -63,10 +38,10 @@ int intinitialize_rtc(void)
     ret = rtc_get_time(rtc, &tm);
 
     if (ret == -ENODATA) {
-        /* RTC has invalid time (probably power loss). Set default. */
+        LOG_WRN("RTC time is invalid, resetting time");
         struct rtc_time init = {
             .tm_year = 2025 - 1900,  /* years since 1900 */
-            .tm_mon  = 0,             /* January = 0 */
+            .tm_mon  = 0,            /* January = 0 */
             .tm_mday = 1,
             .tm_hour = 0,
             .tm_min  = 0,
@@ -75,11 +50,11 @@ int intinitialize_rtc(void)
 
         ret = rtc_set_time(rtc, &init);
         if (ret) {
-            uart_printf("RTC set time failed: -%d\n", ret);
+            LOG_ERR("RTC set time failed: %d", ret);
             return ret;
         }
     } else if (ret) {
-        uart_printf("RTC get time failed: -%d\n", ret);
+        LOG_ERR("RTC get time failed: %d", ret);
         return ret;
     }
 
@@ -90,6 +65,7 @@ int get_rtc_ticks(uint64_t* ticks) {
     struct rtc_time tm;
     int ret = rtc_get_time(rtc, &tm);
     if (ret) {
+        LOG_ERR("RTC get time failed: %d", ret);
         return ret;
     }
 
@@ -101,63 +77,3 @@ int get_rtc_ticks(uint64_t* ticks) {
 
     return 0;
 }
-
-// /* Dummy cb: required so driver sets AIE and wires the IRQ */
-// static void rv3028_alarm_cb(const struct device *dev, uint16_t id, void *user)
-// {
-// 	ARG_UNUSED(dev); ARG_UNUSED(id); ARG_UNUSED(user);
-// }
-
-// /* minutes → next occurrence (HH:MM), day wildcarded */
-// int set_alarm_and_sleep(int minutes)
-// {
-//     if (!device_is_ready(rtc)) {
-//         megablink(6, 3, 400);
-//         return -ENODEV;
-//     }
-//     if (!device_is_ready(int_gpio)) {
-//         megablink(7, 3, 400);
-//         return -ENODEV;
-//     }
-
-//     struct rtc_time now;
-//     if (rtc_get_time(rtc, &now)) {
-//         megablink(2, 3, 400);
-//         return -EIO;
-//     }
-
-//     int total = (now.tm_hour * 60 + now.tm_min + minutes) % (24 * 60);
-//     struct rtc_time at = {0};
-//     at.tm_hour = total / 60;
-//     at.tm_min  = total % 60;
-
-//     uint16_t mask = RTC_ALARM_TIME_MASK_HOUR | RTC_ALARM_TIME_MASK_MINUTE;
-//     if (rtc_alarm_set_time(rtc, 0, mask, &at)) {
-//         megablink(3, 3, 400);
-//         return -EIO;
-//     }
-
-//     if (rtc_alarm_set_callback(rtc, 0, rv3028_alarm_cb, NULL)) {
-//         megablink(4, 3, 400);
-//         return -EIO;
-//     }
-
-//     /* RTC interrupt line */
-//     gpio_pin_configure(int_gpio, RV3028_INT_PIN, GPIO_INPUT | GPIO_PULL_UP);
-//     nrf_gpio_cfg_sense_input(RV3028_INT_PIN,
-//                              NRF_GPIO_PIN_PULLUP,
-//                              NRF_GPIO_PIN_SENSE_LOW);
-
-//     // button wake
-//     if (device_is_ready(btn.port)) {
-//         gpio_pin_configure_dt(&btn, GPIO_INPUT);
-//         nrf_gpio_cfg_sense_input(btn.pin,
-//                                  NRF_GPIO_PIN_NOPULL,
-//                                  NRF_GPIO_PIN_SENSE_LOW);
-//     }
-
-//     // power off
-//     k_msleep(100);
-//     nrf_power_system_off(NRF_POWER);
-//     return 0;
-// }

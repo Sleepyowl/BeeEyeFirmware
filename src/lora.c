@@ -1,10 +1,13 @@
 #include "lora.h"
 #include "uart_print.h"
 
+#include <zephyr/logging/log.h>
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/lora.h>
 #include <errno.h>
+
+LOG_MODULE_REGISTER(app_lora, LOG_LEVEL_DBG);
 
 const struct device *lora_dev = DEVICE_DT_GET(DT_NODELABEL(sx1262));
 
@@ -22,13 +25,13 @@ int init_lora(void) {
     };
 
     if(!device_is_ready(lora_dev)) {
-        uart_printf("SX1262 not found\n");
+        LOG_ERR("SX1262 not ready");
         return -ENODEV;
     }
 
     int ret = lora_config(lora_dev, &config);
     if (ret < 0) {
-        uart_printf("LoRa config failed (%d)\n", ret);
+        LOG_ERR("LoRa config failed: %d", ret);
         return ret;
     }
 
@@ -59,6 +62,7 @@ int lora_transmit_text(const char *text)
 	fillHeader(tx_buf, BEE_EYE_MESSAGE_TYPE_TEXT);
 	memcpy(tx_buf + sizeof(struct MessageHeader), text, text_len);
 
+    LOG_DBG("Sending %d bytes over LoRa (text)", payload);
 	return lora_send(lora_dev, tx_buf, payload); /* 0 or -ERRNO */
 }
 
@@ -77,5 +81,6 @@ int lora_transmit_measures(const struct Measure *measure, uint8_t count)
 	fillHeader(tx_buf, BEE_EYE_MESSAGE_TYPE_MEASURES);
 	memcpy(tx_buf + sizeof(struct MessageHeader), measure, sizeof(struct Measure) * count);
 
+    LOG_DBG("Sending %d bytes over LoRa (%d measures)", payload, count);
 	return lora_send(lora_dev, tx_buf, payload);
 }

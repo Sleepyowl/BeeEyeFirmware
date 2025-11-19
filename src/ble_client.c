@@ -2,6 +2,7 @@
 #include "uart_print.h"
 
 #include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/sys/byteorder.h>
@@ -10,6 +11,7 @@
 #error "enable CONFIG_BT_EXT_ADV"
 #endif
 
+LOG_MODULE_REGISTER(app_ble, LOG_LEVEL_DBG);
 
 #define NAME_LEN 30
 static bool scanning_active = false;
@@ -38,6 +40,7 @@ static bool data_cb(struct bt_data *data, void *user_data)
 	struct AnnounceData *announceData = user_data;
 	uint8_t len;
 
+	// note: we expect name being parsed before manufacturer data
 	switch (data->type) {
 	case BT_DATA_NAME_SHORTENED:
 	case BT_DATA_NAME_COMPLETE:
@@ -83,11 +86,11 @@ static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_si
 
 	++ble_measure_count;
 
-	// // uart_printf("Sensor %s, magic %04x, temp %d, hum %d\n", 
-	// // 	announceData.name, 
-	// // 	announceData.sensorData.magic, 
-	// // 	sys_le16_to_cpu(announceData.sensorData.temp) >> 8, 
-	// // 	sys_le16_to_cpu(announceData.sensorData.hum) >> 8);
+	LOG_DBG("Sensor %s, magic %04x, temp %d, hum %d\n", 
+		announceData.name, 
+		announceData.sensorData.magic, 
+		sys_le16_to_cpu(announceData.sensorData.temp) >> 8, 
+		sys_le16_to_cpu(announceData.sensorData.hum) >> 8);
 
 	for(int i=0;i<num_sensors;++i) {
 		if(memcmp(sensors[i].address, info->addr->a.val, 6) == 0) {
@@ -109,21 +112,6 @@ static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_si
 	++num_sensors;
 }
 
-void bt_le_scan_cb(const bt_addr_le_t *addr, int8_t rssi, uint8_t adv_type, struct net_buf_simple *buf) {
-	static struct AnnounceData announceData;
-	bt_data_parse(buf, data_cb, &announceData);
-	if (strncmp(announceData.name, "BeeEye_", 7) != 0) return;
-	if (announceData.sensorData.magic != 0xBEEE) return;
-	uart_printf("(DIF) adv_type=0x%X addr_type=%d, addr=%02X%02X%02X_%02X%02X%02X\n",
-       adv_type, addr->type
-				, addr->a.val[5]
-				, addr->a.val[4]
-				, addr->a.val[3]
-				, addr->a.val[2]
-				, addr->a.val[1]
-				, addr->a.val[0]);
-}
-
 static struct bt_le_scan_cb scan_callbacks = {
 	.recv = scan_recv,
 };
@@ -138,7 +126,7 @@ int ble_client_stop(void)
 
     int ret = bt_le_scan_stop();
 	if(ret) {
-		uart_printf("Stop scanning failed: %d\n", ret);
+		LOG_ERR("Stop scanning failed: %d", ret);
 		return ret;
 	}
 
@@ -149,20 +137,20 @@ int ble_client_stop(void)
 
 int ble_client_start(int interval, int window)
 {
-	uart_printf("(Re)starting scan with .interval=0x%x, .window=0x%x\n",(interval << 3) / 5, (window << 3) / 5);
+	LOG_INF("(Re)starting scan with .interval=0x%x, .window=0x%x\n",(interval << 3) / 5, (window << 3) / 5);
     int err;
 
     if (!bt_is_ready()) {
 		memset(sensors, 0, sizeof(sensors));
         err = bt_enable(NULL);
         if (err) {
-            uart_printf("BLE init failed: %d\n", err);
+            LOG_ERR("BLE init failed: %d", err);
             return err;
         }
     }
 
     if (scanning_active) {
-		uart_printf("Scanning already active, stopping\n");
+		LOG_DBG("Scanning already active, stopping");
         err = ble_client_stop();
 		if(err) {
 			return err;
@@ -180,12 +168,12 @@ int ble_client_start(int interval, int window)
 
     err = bt_le_scan_start(&scan_param, NULL);
 	if (err) {
-		uart_printf("Start scanning failed: %d\n", err);
+		LOG_ERR("Start scanning failed: %d", err);
 		return err;
 	}
 
     scanning_active = true;
-	uart_printf("Scanning started\n");
+	LOG_DBG("Scanning started\n");
     return 0;
 }
 
@@ -201,7 +189,7 @@ uint64_t ble_client_get_next_sensor_window(void) {
 		uint64_t result = 0;
 
         for (int i = 0; i < num_sensors; i++) {
-			uart_printf("Record #%d addr=%02X%02X%02X%02X%02X%02X\n", i
+			LOG_DBG("Record #%d addr=%02X%02X%02X%02X%02X%02X\n", i
 				, sensors[i].address[5]
 				, sensors[i].address[4]
 				, sensors[i].address[3]
@@ -221,7 +209,7 @@ uint64_t ble_client_get_next_sensor_window(void) {
 				result = next;
         }
 		
-		uart_printf("sensors = %d, next sensor window = %llu\n", num_sensors, result);
+		LOG_DBG("sensors = %d, next sensor window = %llu\n", num_sensors, result);
 		return result;
 }
 
