@@ -25,7 +25,7 @@ int intinitialize_rtc(void)
     
     // ret = device_init(rtc);
     // if (ret && ret != -EALREADY) {
-    //     uart_printf("Couldn't init RTC device: %d\n", ret);
+    //     LOG_ERR("Couldn't init RTC device: %d", ret);
     //     return -ret;
     // }
     

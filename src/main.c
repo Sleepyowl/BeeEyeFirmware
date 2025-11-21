@@ -74,13 +74,13 @@ int main(void)
 	if(ret){
 		LOG_ERR("LoRa init failed: %d", ret);
 	} else {
-		LOG_INF("LoRa OK\n");
+		LOG_INF("LoRa OK");
 	}
 
 	// Send banner
 	ret=lora_transmit_text("BeeEye v0.2-nrf");
 	if(ret) {
-		LOG_ERR("LoRa TX failed: %d\n", ret);
+		LOG_ERR("LoRa TX failed: %d", ret);
 	}
 
 	uint64_t start = k_uptime_get();
@@ -95,8 +95,8 @@ int main(void)
 			t_stop_hifreq = 0;
 			LOG_INF("Stopping ble scan, sensors found so far = %d", ble_get_sensor_count());
 			ble_client_stop();
-			// uart_printf("Switching to low-freq ble scan, sensors found so far = %d\n", ble_get_sensor_count());
-			// ble_client_start(500,50); // low freq
+			LOG_INF("Switching to low-freq ble scan, sensors found so far = %d", ble_get_sensor_count());
+			ble_client_start(2000, 30); // low freq
 
 			t_start_hifreq = ble_client_get_next_sensor_window();
 			if(t_start_hifreq == 0) {
@@ -111,7 +111,7 @@ int main(void)
 			t_start_hifreq = 0;
 			LOG_INF("Switching to high-freq ble scan");
 			ble_client_start(60, 30); // high freq
-			t_stop_hifreq = now + 1500; // scan with high freq for 1.5s (we start 0.5s earlier)
+			t_stop_hifreq = now + 300; 
 		}
 
 		if (t_start_transmit != 0 && t_start_transmit <= now) {

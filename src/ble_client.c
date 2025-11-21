@@ -26,6 +26,7 @@ struct __attribute__((packed)) SensorData {
         uint16_t magic;
         int16_t temp;
         int16_t hum;
+		uint32_t nextAnnounce;
 };
 
 struct AnnounceData {
@@ -69,13 +70,14 @@ bool addr_is_zero(const uint8_t a[6])
 
 static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_simple *buf)
 {
+	uint64_t now = k_uptime_get();
 	static struct AnnounceData announceData;
 	memset(&announceData, 0, sizeof(struct AnnounceData));
 	bt_data_parse(buf, data_cb, &announceData);
 
     if (strncmp(announceData.name, "BeeEye_", 7) != 0) return;
 	if (announceData.sensorData.magic != 0xBEEE) return;
-	uart_printf("SID=%u adv_type=0x%X props=0x%X addr_type=%d, addr=%02X%02X%02X_%02X%02X%02X\n",
+	LOG_DBG("SID=%u adv_type=0x%X props=0x%X addr_type=%d, addr=%02X%02X%02X_%02X%02X%02X",
        info->sid, info->adv_type, info->adv_props, info->addr->type
 				, info->addr->a.val[5]
 				, info->addr->a.val[4]
@@ -86,29 +88,32 @@ static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_si
 
 	++ble_measure_count;
 
-	LOG_DBG("Sensor %s, magic %04x, temp %d, hum %d\n", 
+	LOG_DBG("Sensor %s, magic %04x, temp %dC, hum %d%%, next %dms", 
 		announceData.name, 
 		announceData.sensorData.magic, 
 		sys_le16_to_cpu(announceData.sensorData.temp) >> 8, 
-		sys_le16_to_cpu(announceData.sensorData.hum) >> 8);
+		sys_le16_to_cpu(announceData.sensorData.hum) >> 8,
+		sys_le32_to_cpu(announceData.sensorData.nextAnnounce));
 
 	for(int i=0;i<num_sensors;++i) {
 		if(memcmp(sensors[i].address, info->addr->a.val, 6) == 0) {
-			uart_printf("Updated sensor lastReceive\n");
+			LOG_DBG("Updated sensor %02X%02X", info->addr->a.val[1], info->addr->a.val[0]);
 			sensors[i].lastReceive = k_uptime_get();
 			sensors[i].rawTemperature = announceData.sensorData.temp;
 			sensors[i].rawHumidity = announceData.sensorData.hum;
+			sensors[i].nextAnnounce = sensors[i].lastReceive + announceData.sensorData.nextAnnounce;
 			return;
 		}
 	}
 
 	if (num_sensors >= MAX_SENSORS) return;
 
-	uart_printf("Registered sensor\n");
+	LOG_DBG("Registered sensor %02X%02X", info->addr->a.val[1], info->addr->a.val[0]);
 	sensors[num_sensors].lastReceive = k_uptime_get();
 	memcpy(sensors[num_sensors].address, info->addr->a.val, 6);
 	sensors[num_sensors].rawTemperature = announceData.sensorData.temp;
 	sensors[num_sensors].rawHumidity = announceData.sensorData.hum;
+	sensors[num_sensors].nextAnnounce = sensors[num_sensors].lastReceive + announceData.sensorData.nextAnnounce;
 	++num_sensors;
 }
 
@@ -137,7 +142,7 @@ int ble_client_stop(void)
 
 int ble_client_start(int interval, int window)
 {
-	LOG_INF("(Re)starting scan with .interval=0x%x, .window=0x%x\n",(interval << 3) / 5, (window << 3) / 5);
+	LOG_INF("(Re)starting scan with .interval=0x%x, .window=0x%x",(interval << 3) / 5, (window << 3) / 5);
     int err;
 
     if (!bt_is_ready()) {
@@ -173,7 +178,7 @@ int ble_client_start(int interval, int window)
 	}
 
     scanning_active = true;
-	LOG_DBG("Scanning started\n");
+	LOG_DBG("Scanning started");
     return 0;
 }
 
@@ -189,18 +194,18 @@ uint64_t ble_client_get_next_sensor_window(void) {
 		uint64_t result = 0;
 
         for (int i = 0; i < num_sensors; i++) {
-			LOG_DBG("Record #%d addr=%02X%02X%02X%02X%02X%02X\n", i
+			LOG_DBG("Record #%d addr=%02X%02X%02X%02X%02X%02X", i
 				, sensors[i].address[5]
 				, sensors[i].address[4]
 				, sensors[i].address[3]
 				, sensors[i].address[2]
 				, sensors[i].address[1]
 				, sensors[i].address[0]);
-			uint64_t lastReceive = sensors[i].lastReceive;
-            if (lastReceive == 0)
+			uint64_t nextAnnounce = sensors[i].nextAnnounce;
+            if (nextAnnounce == 0)
                 continue;
 
-            uint64_t next = lastReceive + 119500;
+            uint64_t next = nextAnnounce;
 			while(next < now) {
 				next += 120000;
 			}
@@ -209,7 +214,14 @@ uint64_t ble_client_get_next_sensor_window(void) {
 				result = next;
         }
 		
-		LOG_DBG("sensors = %d, next sensor window = %llu\n", num_sensors, result);
+		LOG_DBG("sensors = %d, next sensor window = %llu (%02d:%02d:%02d.%03d)", 
+			num_sensors, 
+			result,
+			(int)(result / 3600000),
+			(int)(result % 3600000) / 60000,
+			(int)(result % 60000) / 1000,
+			(int)(result % 1000)			
+		);
 		return result;
 }
 

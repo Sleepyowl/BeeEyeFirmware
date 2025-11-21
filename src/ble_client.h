@@ -7,6 +7,7 @@ struct Sensor {
 	uint8_t		address[6];
 	uint16_t	rawTemperature;
 	uint16_t	rawHumidity;
+	uint64_t	nextAnnounce;
 };
 
 int ble_client_start(int interval, int window);

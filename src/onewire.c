@@ -14,7 +14,7 @@ static volatile uint8_t rom_count;
 void device_found_cb(struct w1_rom rom, void *user_data)
 {
     roms[rom_count] = rom;
-	LOG_INF("Device found; family: 0x%02x, serial: 0x%016llx\n", rom.family,
+	LOG_INF("Device found; family: 0x%02x, serial: 0x%016llx", rom.family,
 		w1_rom_to_uint64(&rom));
     ++rom_count;
 }
@@ -52,7 +52,7 @@ int get_w1_address(void* dest, uint8_t sensor_index) {
 float read_temp(uint8_t sensor_index) {
     if(sensor_index >= rom_count) return -1024;
 
-    LOG_DBG("Reading temperature from {family: 0x%02x, serial: 0x%016llx}\n", 
+    LOG_DBG("Reading temperature from {family: 0x%02x, serial: 0x%016llx}", 
         roms[sensor_index].family,
 		w1_rom_to_uint64(roms));
 
