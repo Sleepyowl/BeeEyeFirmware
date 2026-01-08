@@ -22,11 +22,19 @@ static struct Sensor sensors[MAX_SENSORS];
 static volatile uint8_t num_sensors = 0;
 
 
+struct __attribute__((packed)) SensorDataObsolete {
+        uint16_t magic;
+        int16_t temp;
+        int16_t hum;
+		uint32_t nextAnnounce;
+};
+
 struct __attribute__((packed)) SensorData {
         uint16_t magic;
         int16_t temp;
         int16_t hum;
 		uint32_t nextAnnounce;
+		uint16_t batteryMilliVolt;
 };
 
 struct AnnounceData {
@@ -50,9 +58,10 @@ static bool data_cb(struct bt_data *data, void *user_data)
 		announceData->name[len] = '\0';
 		return true;
 	case BT_DATA_MANUFACTURER_DATA:
-		if (data->data_len == sizeof(struct SensorData)) {
-			(void)memcpy(&announceData->sensorData, data->data, sizeof(struct SensorData));
-		} 
+		if (data->data_len == sizeof(struct SensorDataObsolete) || data->data_len == sizeof(struct SensorData)) {
+			announceData->sensorData.batteryMilliVolt = 0;
+			(void)memcpy(&announceData->sensorData, data->data, data->data_len);
+		}
 		return false;
 
 	default:
@@ -70,7 +79,6 @@ bool addr_is_zero(const uint8_t a[6])
 
 static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_simple *buf)
 {
-	uint64_t now = k_uptime_get();
 	static struct AnnounceData announceData;
 	memset(&announceData, 0, sizeof(struct AnnounceData));
 	bt_data_parse(buf, data_cb, &announceData);

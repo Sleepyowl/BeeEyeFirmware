@@ -1,56 +1,99 @@
-#include <zephyr/kernel.h>
+#include "vsense.h"
+
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/adc.h>
-#include <zephyr/logging/log.h>
-#include <zephyr/devicetree.h>
-#include <stdbool.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/util.h>
+#include <errno.h>
 
-LOG_MODULE_REGISTER(app_vsense);
+/* Devicetree node for the custom vsense device */
+#define VSENSE_NODE DT_NODELABEL(vsense)
 
-#define VSENSE_NODE DT_PATH(vsense)
+/* Enable GPIO from "enable-gpios" */
+static const struct gpio_dt_spec vsense_en =
+	GPIO_DT_SPEC_GET(VSENSE_NODE, enable_gpios);
 
-#if !DT_NODE_HAS_PROP(DT_PATH(vsense), enable_gpios)
-#error "enable-gpios missing"
-#endif
+/* ADC channel from "io-channels" */
+static const struct adc_dt_spec vsense_adc =
+	ADC_DT_SPEC_GET_BY_IDX(VSENSE_NODE, 0);
 
-static const struct gpio_dt_spec vsense_en = GPIO_DT_SPEC_GET(VSENSE_NODE, enable_gpios);
-static const struct adc_dt_spec vsense_adc = ADC_DT_SPEC_GET(VSENSE_NODE);
+/* Voltage divider: high side 330k, low side 220k
+ * Vin = Vmeas * (Rhigh + Rlow) / Rlow = Vmeas * 550 / 220 = Vmeas * 5 / 2
+ */
+#define VSENSE_DIV_NUM  5
+#define VSENSE_DIV_DEN  2
 
-void vsense_enable(bool enable)
+int vsense_measure_mv(uint16_t *out_mv)
 {
-    if(!device_is_ready(vsense_en.port)) {
-        LOG_ERR("Vsense Enable GPIO is not ready");
-        return;
-    }
-    gpio_pin_configure_dt(&vsense_en, GPIO_OUTPUT_INACTIVE);
-    gpio_pin_set_dt(&vsense_en, enable);
-}
+	int ret;
+	int16_t sample;
+	struct adc_sequence seq;
+	int32_t mv;
 
-int vsense_read_mv(void)
-{
-    int16_t buf;
-    struct adc_sequence sequence = {
-        .buffer = &buf,
-        .buffer_size = sizeof(buf),
-    };
+	if (out_mv == NULL) {
+		return -EINVAL;
+	}
 
-    if (!device_is_ready(vsense_adc.dev))
-        return -ENODEV;
+	if (!device_is_ready(vsense_en.port)) {
+		return -ENODEV;
+	}
 
-    if (adc_channel_setup_dt(&vsense_adc) < 0)
-        return -EIO;
+	if (!device_is_ready(vsense_adc.dev)) {
+		return -ENODEV;
+	}
 
-    int32_t sum = 0;
-    for (int i = 0; i < 8; i++) {
-        if (adc_read_dt(&vsense_adc, &sequence) < 0)
-            return -EIO;
-        sum += buf;
+	ret = gpio_pin_configure_dt(&vsense_en, GPIO_OUTPUT_INACTIVE);
+	if (ret < 0) {
+		return ret;
+	}
+
+    ret = gpio_pin_set_dt(&vsense_en, 1);
+    if (ret < 0) {
+        return ret;
     }
 
-    int32_t raw = sum / 8;
-    LOG_DBG("Vsense raw reading = %d", raw);
-    int32_t mv = raw * vsense_adc.vref_mv / (BIT(vsense_adc.resolution) - 1);
-    mv = mv * (330 + 220) / 220; /* divider compensation */
-    return mv;
+    k_msleep(5); // RC
+
+	/* Make sure ADC channel is set up */
+	ret = adc_channel_setup_dt(&vsense_adc);
+	if (ret < 0) {
+		return ret;
+	}
+
+	memset(&seq, 0, sizeof(seq));
+	seq.buffer = &sample;
+	seq.buffer_size = sizeof(sample);
+	seq.resolution = vsense_adc.resolution;
+	seq.channels = BIT(vsense_adc.channel_id);
+
+	ret = adc_read_dt(&vsense_adc, &seq);
+	if (ret < 0) {
+		return ret;
+	}
+
+	mv = sample;
+
+	ret = adc_raw_to_millivolts_dt(&vsense_adc, &mv);
+	if (ret < 0) {
+		return ret;
+	}
+
+	/* Compensate for divider: battery_mv = measured_mv * 5 / 2 */
+	int32_t batt_mv = (mv * VSENSE_DIV_NUM) / VSENSE_DIV_DEN;
+
+	if (batt_mv < 0) {
+		batt_mv = 0;
+	} else if (batt_mv > UINT16_MAX) {
+		batt_mv = UINT16_MAX;
+	}
+
+	*out_mv = (uint16_t)batt_mv;
+
+    ret = gpio_pin_set_dt(&vsense_en, 0);
+    if (ret < 0) {
+        return ret;
+    }
+
+	return 0;
 }

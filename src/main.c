@@ -11,7 +11,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
 #include <hal/nrf_gpio.h>
-
+#include <nrfx.h>
 
 LOG_MODULE_REGISTER(app_main, LOG_LEVEL_DBG);
 
@@ -23,10 +23,13 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 struct Measure	measures[MAX_MEASURES];
 
 void fillMeasureFromSensor(struct Measure* measure, struct Sensor* sensor);
+static uint8_t battery_addr_suffix[6];
+static void battery_addr_init(void);
 
 int main(void)
 {
 	int ret = 0;
+	battery_addr_init();
 
 	if (!gpio_is_ready_dt(&led)) {
 		LOG_ERR("GPIO is not ready");
@@ -60,6 +63,14 @@ int main(void)
 		LOG_INF("RTC OK");
 	}
 
+	// Vsense
+	uint16_t batteryMilliVolt = 0;
+	ret = vsense_measure_mv(&batteryMilliVolt);
+	if(ret) {
+		LOG_ERR("Battery Voltage measurement failed");
+	}
+	LOG_INF("Battery Voltage = %dmV", batteryMilliVolt);
+
 	// Start BLE
 	ret = ble_client_start(60, 30);
 	if(ret) {
@@ -78,7 +89,7 @@ int main(void)
 	}
 
 	// Send banner
-	ret=lora_transmit_text("BeeEye v0.2-nrf");
+	ret=lora_transmit_text("BeeEye v0.3-nrf");
 	if(ret) {
 		LOG_ERR("LoRa TX failed: %d", ret);
 	}
@@ -133,7 +144,22 @@ int main(void)
 				measure->_data1.tempC = read_temp(i);
 				get_w1_address(measure->sensorAddress, i);
 			}
-			
+
+			// Battery
+			uint16_t mv = 0;
+			ret = vsense_measure_mv(&mv);
+			if(ret) {
+				LOG_ERR("Couldn't get battery voltage %d", ret);
+			} else {
+				if(measures_to_transmit < MAX_MEASURES) {
+					measures[measures_to_transmit].type = BEE_EYE_MEASURE_TYPE_BATTERY;
+					measures[measures_to_transmit].sensorAddress[0] = 'B';
+					measures[measures_to_transmit].sensorAddress[1] = 'T';	
+					memcpy(&measures[measures_to_transmit].sensorAddress[2], battery_addr_suffix, 6);				
+					measures[measures_to_transmit]._data1.mV = mv;
+					++measures_to_transmit;
+				}
+			}
 
 			LOG_INF("Sending %d measures", measures_to_transmit);
 			lora_transmit_measures(measures, measures_to_transmit);
@@ -157,4 +183,17 @@ void fillMeasureFromSensor(struct Measure* measure, struct Sensor* sensor) {
 	measure->type = BEE_EYE_MEASURE_TYPE_TEMPHUM;
 	measure->_data1.tempC = sensor->rawTemperature / 256.0f;
 	measure->_data2.hum = sensor->rawHumidity / 256.0f;
+}
+
+static void battery_addr_init(void)
+{
+    /* 64-bit ID from FICR */
+    uint64_t dev_id =
+        ((uint64_t)NRF_FICR->DEVICEID[1] << 32) |
+        ((uint64_t)NRF_FICR->DEVICEID[0]);
+
+    /* Take 6 LSB bytes of the ID */
+    for (int i = 0; i < 6; i++) {
+        battery_addr_suffix[i] = (uint8_t)(dev_id >> (8 * i));
+    }
 }

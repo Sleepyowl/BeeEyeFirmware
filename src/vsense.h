@@ -1,5 +1,4 @@
 #pragma once
-#include <stdbool.h>
+#include <stdint.h>
 
-void vsense_enable(bool enable);
-int vsense_read_mv(void);
+int vsense_measure_mv(uint16_t *out_mv);
