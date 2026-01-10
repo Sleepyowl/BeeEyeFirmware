@@ -89,7 +89,7 @@ int main(void)
 	}
 
 	// Send banner
-	ret=lora_transmit_text("BeeEye v0.3-nrf");
+	ret=lora_transmit_text("BeeEye v0.4-nrf");
 	if(ret) {
 		LOG_ERR("LoRa TX failed: %d", ret);
 	}

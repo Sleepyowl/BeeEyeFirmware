@@ -38,12 +38,6 @@
         io-channels = <&adc 2>; /* example channel index */
         label = "VSENSE";
     };
-
-    ow0: w1 {
-        compatible = "zephyr,w1-gpio";
-        gpios = <&gpio0 19 (GPIO_ACTIVE_HIGH | GPIO_OPEN_DRAIN | GPIO_PULL_UP)>;
-        label = "ONEWIRE_0";
-    };
 };
 
 &uicr {
@@ -157,6 +151,18 @@
 		backup-switch-mode = "level";
 		trickle-resistor-ohms = <15000>;
 		// zephyr,deferred-init;
+    };
+
+    /* DS2484 I2C -> 1-Wire master */
+    ow0: w1@18 {
+        status = "okay";
+        compatible = "maxim,ds2484";
+        reg = <0x18>;
+        slpz-gpios = <&gpio0 19 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>; 
+        label = "ONEWIRE_0";
+
+        // enable if you want DS2484 active pull-up 
+        // active-pullup;
     };
 };
 
