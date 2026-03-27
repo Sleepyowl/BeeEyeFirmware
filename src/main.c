@@ -176,13 +176,14 @@ static void event_loop(void) {
 			t_stop_hifreq = 0;
 			LOG_INF("Stopping ble scan, sensors found so far = %d", ble_get_sensor_count());
 			ble_client_stop();
-			LOG_INF("Switching to low-freq ble scan, sensors found so far = %d", ble_get_sensor_count());
-			ble_client_start(2000, 30); // low freq
+
+			// LOG_INF("Switching to low-freq ble scan, sensors found so far = %d", ble_get_sensor_count());
+			// ble_client_start(2000, 30); // low freq
 
 			t_start_hifreq = ble_client_get_next_sensor_window();
 			if(t_start_hifreq == 0) {
-				LOG_WRN("No devices detected, scheduling next hi-freq scan in 2 minutes");
-				t_start_hifreq = now + 120000;
+				LOG_WRN("No BLE devices detected, scheduling next hi-freq scan in 15 minutes");
+				t_start_hifreq = now + 900000;
 			} else {
 				LOG_INF("Next hi-freq in %d seconds", (int)((t_start_hifreq - now) / 1000));
 			}
@@ -207,6 +208,7 @@ static void event_loop(void) {
 				++measures_to_transmit;
 			}
 			// One Wire
+			wake_w1();
 			enum_w1();
 			for(int i = 0; i < get_w1_device_count(); ++i) {
 				struct Measure* measure = measures + measures_to_transmit;
@@ -216,6 +218,7 @@ static void event_loop(void) {
 				measure->_data1.tempC = read_temp(i);
 				get_w1_address(measure->sensorAddress, i);
 			}
+			sleep_w1();
 
 			// Battery
 			uint16_t mv = 0;

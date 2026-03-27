@@ -3,6 +3,7 @@
 
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/w1.h>
+#include <zephyr/pm/device.h>
 
 LOG_MODULE_REGISTER(app_w1, LOG_LEVEL_DBG);
 
@@ -10,6 +11,16 @@ static const struct device *dev_w1 = DEVICE_DT_GET(DT_NODELABEL(ow0));
 
 static struct w1_rom roms[16];
 static volatile uint8_t rom_count;
+
+int sleep_w1(void)
+{
+    return pm_device_action_run(dev_w1, PM_DEVICE_ACTION_SUSPEND);
+}
+
+int wake_w1(void)
+{
+    return pm_device_action_run(dev_w1, PM_DEVICE_ACTION_RESUME);
+}
 
 void device_found_cb(struct w1_rom rom, void *user_data)
 {

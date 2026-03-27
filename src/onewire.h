@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+int sleep_w1(void);
+int wake_w1(void);
 void enum_w1(void);
 uint8_t get_w1_device_count(void);
 
