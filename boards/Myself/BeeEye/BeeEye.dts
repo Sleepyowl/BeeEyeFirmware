@@ -158,7 +158,7 @@
         status = "okay";
         compatible = "maxim,ds2484";
         reg = <0x18>;
-        slpz-gpios = <&gpio0 19 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>; 
+        slpz-gpios = <&gpio0 19 (GPIO_ACTIVE_LOW)>; 
         label = "ONEWIRE_0";
 
         // enable if you want DS2484 active pull-up 
