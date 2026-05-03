@@ -31,8 +31,16 @@ struct __attribute__((packed)) SensorDataObsolete {
 
 struct __attribute__((packed)) SensorData {
         uint16_t magic;
-        int16_t temp;
-        int16_t hum;
+		union {
+			struct __attribute__((packed)) {
+				int16_t temp;
+				int16_t hum;
+			} th;
+
+			struct __attribute__((packed)) {
+				int32_t weight;
+			} w;
+		} data;
 		uint32_t nextAnnounce;
 		uint16_t batteryMilliVolt;
 };
@@ -76,6 +84,21 @@ bool addr_is_zero(const uint8_t a[6])
 {
     return (a[0] | a[1] | a[2] | a[3] | a[4] | a[5]) == 0;
 }
+#define MAGIC_BEYE_TEMPHUM 0xBEEE
+#define MAGIC_BEYE_WEIGHT 0xBEEF
+
+static void update_sensor(struct Sensor *sensor, const struct SensorData *data) {
+	sensor->lastReceive = k_uptime_get();
+	if (data->magic == MAGIC_BEYE_TEMPHUM) {
+		sensor->type = SENSOR_TYPE_TEMPHUM;
+		sensor->data.th.rawTemperature = data->data.th.temp;
+		sensor->data.th.rawHumidity = data->data.th.hum;				
+	} else {
+		sensor->type = SENSOR_TYPE_WEIGHT;
+		sensor->data.w.rawWeight = data->data.w.weight;
+	}
+	sensor->nextAnnounce = sensor->lastReceive + data->nextAnnounce;
+}
 
 static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_simple *buf)
 {
@@ -84,7 +107,8 @@ static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_si
 	bt_data_parse(buf, data_cb, &announceData);
 
     if (strncmp(announceData.name, "BeeEye_", 7) != 0) return;
-	if (announceData.sensorData.magic != 0xBEEE) return;
+	uint16_t magic = announceData.sensorData.magic;
+	if (magic != MAGIC_BEYE_TEMPHUM && magic != MAGIC_BEYE_WEIGHT) return;
 	LOG_DBG("SID=%u adv_type=0x%X props=0x%X addr_type=%d, addr=%02X%02X%02X_%02X%02X%02X",
        info->sid, info->adv_type, info->adv_props, info->addr->type
 				, info->addr->a.val[5]
@@ -96,20 +120,15 @@ static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_si
 
 	++ble_measure_count;
 
-	LOG_DBG("Sensor %s, magic %04x, temp %dC, hum %d%%, next %dms", 
+	LOG_DBG("Sensor %s, magic %04x, next %dms", 
 		announceData.name, 
-		announceData.sensorData.magic, 
-		sys_le16_to_cpu(announceData.sensorData.temp) >> 8, 
-		sys_le16_to_cpu(announceData.sensorData.hum) >> 8,
+		announceData.sensorData.magic, 		
 		sys_le32_to_cpu(announceData.sensorData.nextAnnounce));
 
 	for(int i=0;i<num_sensors;++i) {
-		if(memcmp(sensors[i].address, info->addr->a.val, 6) == 0) {
+		if(memcmp(sensors[i].address, info->addr->a.val, 6) == 0) {			
+			update_sensor(sensors + i, &announceData.sensorData);
 			LOG_DBG("Updated sensor %02X%02X", info->addr->a.val[1], info->addr->a.val[0]);
-			sensors[i].lastReceive = k_uptime_get();
-			sensors[i].rawTemperature = announceData.sensorData.temp;
-			sensors[i].rawHumidity = announceData.sensorData.hum;
-			sensors[i].nextAnnounce = sensors[i].lastReceive + announceData.sensorData.nextAnnounce;
 			return;
 		}
 	}
@@ -117,11 +136,8 @@ static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_si
 	if (num_sensors >= MAX_SENSORS) return;
 
 	LOG_DBG("Registered sensor %02X%02X", info->addr->a.val[1], info->addr->a.val[0]);
-	sensors[num_sensors].lastReceive = k_uptime_get();
 	memcpy(sensors[num_sensors].address, info->addr->a.val, 6);
-	sensors[num_sensors].rawTemperature = announceData.sensorData.temp;
-	sensors[num_sensors].rawHumidity = announceData.sensorData.hum;
-	sensors[num_sensors].nextAnnounce = sensors[num_sensors].lastReceive + announceData.sensorData.nextAnnounce;
+	update_sensor(sensors + num_sensors, &announceData.sensorData);
 	++num_sensors;
 }
 

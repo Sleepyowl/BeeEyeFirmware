@@ -141,7 +141,8 @@ int main(void)
 				++measures_to_transmit;
 
 				measure->type = BEE_EYE_MEASURE_TYPE_TEMPERATURE;
-				measure->_data1.tempC = read_temp(i);
+				measure->data.th.tempC = read_temp(i);
+				measure->data.th.hum = 0;
 				get_w1_address(measure->sensorAddress, i);
 			}
 
@@ -156,7 +157,7 @@ int main(void)
 					measures[measures_to_transmit].sensorAddress[0] = 'B';
 					measures[measures_to_transmit].sensorAddress[1] = 'T';	
 					memcpy(&measures[measures_to_transmit].sensorAddress[2], battery_addr_suffix, 6);				
-					measures[measures_to_transmit]._data1.mV = mv;
+					measures[measures_to_transmit].data.bat.mV = mv;
 					++measures_to_transmit;
 				}
 			}
@@ -180,9 +181,14 @@ void fillMeasureFromSensor(struct Measure* measure, struct Sensor* sensor) {
 	measure->sensorAddress[0] = 'B';
 	measure->sensorAddress[1] = 'T';
 	memcpy(measure->sensorAddress + 2, sensor->address, 6);
-	measure->type = BEE_EYE_MEASURE_TYPE_TEMPHUM;
-	measure->_data1.tempC = sensor->rawTemperature / 256.0f;
-	measure->_data2.hum = sensor->rawHumidity / 256.0f;
+	if(sensor->type == SENSOR_TYPE_TEMPHUM) {
+		measure->type = BEE_EYE_MEASURE_TYPE_TEMPHUM;
+		measure->data.th.tempC = sensor->data.th.rawTemperature / 256.0f;
+		measure->data.th.hum = sensor->data.th.rawHumidity / 256.0f;
+	} else if(sensor->type == SENSOR_TYPE_WEIGHT) {
+		measure->type = BEE_EYE_MEASURE_TYPE_WEIGHT;
+		measure->data.w.weight = sensor->data.w.rawWeight / 256.0f;
+	}
 }
 
 static void battery_addr_init(void)
