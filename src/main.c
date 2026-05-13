@@ -7,6 +7,7 @@
 #include "ble_client.h"
 
 #include <stdio.h>
+#include <assert.h>
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/logging/log.h>
@@ -20,11 +21,13 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 // static const struct device *gpio0 = DEVICE_DT_GET(DT_NODELABEL(gpio0));
 
 #define MAX_MEASURES 8
-struct Measure	measures[MAX_MEASURES];
+struct Measure measures[MAX_MEASURES];
 
 void fillMeasureFromSensor(struct Measure* measure, struct Sensor* sensor);
+void fillMeasureFromSensorBat(struct Measure* measure, struct Sensor* sensor);
 static uint8_t battery_addr_suffix[6];
 static void battery_addr_init(void);
+void transmitSensorData(uint64_t cutoff);
 
 int main(void)
 {
@@ -121,49 +124,12 @@ int main(void)
 		if (t_start_hifreq != 0 && t_start_hifreq <= now) {
 			t_start_hifreq = 0;
 			LOG_INF("Switching to high-freq ble scan");
-			ble_client_start(60, 30); // high freq
-			t_stop_hifreq = now + 300; 
+			ble_client_start(100, 100); // high freq
+			t_stop_hifreq = now + 500; 
 		}
 
 		if (t_start_transmit != 0 && t_start_transmit <= now) {
-			uint64_t cutoff = now - 300000; // ignore sensors with last measure before last transmit
-			uint8_t measures_to_transmit = 0;
-			for(int i = 0; i < ble_get_sensor_count(); ++i) {
-				struct Sensor *sensor = ble_get_sensor(i);
-				if (sensor->lastReceive < cutoff) continue;
-				fillMeasureFromSensor(measures + measures_to_transmit, sensor);
-				++measures_to_transmit;
-			}
-			// One Wire
-			enum_w1();
-			for(int i = 0; i < get_w1_device_count(); ++i) {
-				struct Measure* measure = measures + measures_to_transmit;
-				++measures_to_transmit;
-
-				measure->type = BEE_EYE_MEASURE_TYPE_TEMPERATURE;
-				measure->data.th.tempC = read_temp(i);
-				measure->data.th.hum = 0;
-				get_w1_address(measure->sensorAddress, i);
-			}
-
-			// Battery
-			uint16_t mv = 0;
-			ret = vsense_measure_mv(&mv);
-			if(ret) {
-				LOG_ERR("Couldn't get battery voltage %d", ret);
-			} else {
-				if(measures_to_transmit < MAX_MEASURES) {
-					measures[measures_to_transmit].type = BEE_EYE_MEASURE_TYPE_BATTERY;
-					measures[measures_to_transmit].sensorAddress[0] = 'B';
-					measures[measures_to_transmit].sensorAddress[1] = 'T';	
-					memcpy(&measures[measures_to_transmit].sensorAddress[2], battery_addr_suffix, 6);				
-					measures[measures_to_transmit].data.bat.mV = mv;
-					++measures_to_transmit;
-				}
-			}
-
-			LOG_INF("Sending %d measures", measures_to_transmit);
-			lora_transmit_measures(measures, measures_to_transmit);
+			transmitSensorData(now - 300000);
 			t_start_transmit = now + 300000; // schedule LoRa transmit every 5 minutes
 		}
 
@@ -175,6 +141,83 @@ int main(void)
 		k_msleep(next - now);
 	}
 	return 0;
+}
+
+static void flush_measures(uint8_t *count, uint8_t *total)
+{
+	if (*count == 0) return;
+	assert(*count <= MAX_MEASURES);
+
+	LOG_INF("Sending %d measures", *count);
+	lora_transmit_measures(measures, *count);
+	*total += *count;
+	*count = 0;
+}
+
+static struct Measure *alloc_measure(uint8_t *count, uint8_t *total)
+{
+	if (*count == MAX_MEASURES) {
+		flush_measures(count, total);
+	}
+
+	return &measures[(*count)++];
+}
+
+void transmitSensorData(uint64_t cutoff)
+{
+	int ret;
+	uint8_t total_measures = 0;
+	uint8_t batch_count = 0;
+
+	// Iterate over BLE sensors
+	for (int i = 0; i < ble_get_sensor_count(); ++i) {
+		struct Sensor *sensor = ble_get_sensor(i);
+
+		if (sensor->lastReceive < cutoff) continue;
+
+		fillMeasureFromSensor(alloc_measure(&batch_count, &total_measures),
+			sensor);
+
+		if (!sensor->rawBattery) continue;
+		
+		fillMeasureFromSensorBat(alloc_measure(&batch_count, &total_measures),
+			sensor);
+	}
+
+	// Iterate over 1Wire sensors
+	enum_w1();
+	for (int i = 0; i < get_w1_device_count(); ++i) {
+		struct Measure *measure =
+			alloc_measure(&batch_count, &total_measures);
+
+		measure->type = BEE_EYE_MEASURE_TYPE_TEMPERATURE;
+		measure->data.th.tempC = read_temp(i);
+		measure->data.th.hum = 0;
+
+		get_w1_address(measure->sensorAddress, i);
+	}
+
+	// Send station's battery voltage
+	uint16_t mv = 0;
+	ret = vsense_measure_mv(&mv);
+	if (ret) {
+		LOG_ERR("Couldn't get battery voltage %d", ret);
+	} else {
+		struct Measure *measure = alloc_measure(&batch_count, &total_measures);
+
+		measure->type = BEE_EYE_MEASURE_TYPE_BATTERY;
+		measure->sensorAddress[0] = 'B';
+		measure->sensorAddress[1] = 'T';
+
+		memcpy(&measure->sensorAddress[2], battery_addr_suffix, 6);
+
+		measure->data.bat.mV = mv;
+	}
+
+	// Flush the reminder
+	flush_measures(&batch_count, &total_measures);
+
+	LOG_INF("Sent total of %d measures", total_measures);
 }
 
 void fillMeasureFromSensor(struct Measure* measure, struct Sensor* sensor) {
@@ -189,6 +232,14 @@ void fillMeasureFromSensor(struct Measure* measure, struct Sensor* sensor) {
 		measure->type = BEE_EYE_MEASURE_TYPE_WEIGHT;
 		measure->data.w.weight = sensor->data.w.rawWeight / 256.0f;
 	}
+}
+
+void fillMeasureFromSensorBat(struct Measure* measure, struct Sensor* sensor) {
+	measure->sensorAddress[0] = 'B';
+	measure->sensorAddress[1] = 'T';
+	memcpy(measure->sensorAddress + 2, sensor->address, 6);
+	measure->type = BEE_EYE_MEASURE_TYPE_BATTERY;
+	measure->data.bat.mV = sensor->rawBattery / 256.0f;
 }
 
 static void battery_addr_init(void)

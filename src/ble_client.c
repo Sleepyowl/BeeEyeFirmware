@@ -1,11 +1,13 @@
 #include "ble_client.h"
 #include "uart_print.h"
+#include "protocol.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/crc.h>
 
 #if !defined(CONFIG_BT_EXT_ADV)
 #error "enable CONFIG_BT_EXT_ADV"
@@ -29,25 +31,9 @@ struct __attribute__((packed)) SensorDataObsolete {
 		uint32_t nextAnnounce;
 };
 
-struct __attribute__((packed)) SensorData {
-        uint16_t magic;
-		union {
-			struct __attribute__((packed)) {
-				int16_t temp;
-				int16_t hum;
-			} th;
-
-			struct __attribute__((packed)) {
-				int32_t weight;
-			} w;
-		} data;
-		uint32_t nextAnnounce;
-		uint16_t batteryMilliVolt;
-};
-
 struct AnnounceData {
 	char name[NAME_LEN];
-	struct SensorData sensorData;
+	struct ManufacturerData sensorData;
 };
 
 static bool data_cb(struct bt_data *data, void *user_data)
@@ -66,8 +52,16 @@ static bool data_cb(struct bt_data *data, void *user_data)
 		announceData->name[len] = '\0';
 		return true;
 	case BT_DATA_MANUFACTURER_DATA:
-		if (data->data_len == sizeof(struct SensorDataObsolete) || data->data_len == sizeof(struct SensorData)) {
-			announceData->sensorData.batteryMilliVolt = 0;
+		memset(&announceData->sensorData, 0, sizeof(announceData->sensorData));
+		if (data->data_len == sizeof(struct SensorDataObsolete)) {
+			const struct SensorDataObsolete *p = (const struct SensorDataObsolete*)data->data;
+			announceData->sensorData.nextTransmission = p->nextAnnounce;
+			announceData->sensorData.flags = BEE_EYE_BATTERY_3V3 | BEE_EYE_METRIC_TEMPHUM | BEE_EYE_TIMER_1000HZ;
+			announceData->sensorData.magic = p->magic == 0xBEEE ? BEE_EYE_MAGIC : 0;
+			announceData->sensorData.data.th.temp = p->temp;
+			announceData->sensorData.data.th.hum = p->hum;
+			announceData->sensorData.crc = crc8(&announceData->sensorData, sizeof(announceData->sensorData) - sizeof(announceData->sensorData.crc), 0x07, 0, false);
+		} else if (data->data_len == sizeof(struct ManufacturerData)) {
 			(void)memcpy(&announceData->sensorData, data->data, data->data_len);
 		}
 		return false;
@@ -84,20 +78,40 @@ bool addr_is_zero(const uint8_t a[6])
 {
     return (a[0] | a[1] | a[2] | a[3] | a[4] | a[5]) == 0;
 }
-#define MAGIC_BEYE_TEMPHUM 0xBEEE
-#define MAGIC_BEYE_WEIGHT 0xBEEF
 
-static void update_sensor(struct Sensor *sensor, const struct SensorData *data) {
+static void update_sensor(struct Sensor *sensor, const struct ManufacturerData *data) {
 	sensor->lastReceive = k_uptime_get();
-	if (data->magic == MAGIC_BEYE_TEMPHUM) {
-		sensor->type = SENSOR_TYPE_TEMPHUM;
-		sensor->data.th.rawTemperature = data->data.th.temp;
-		sensor->data.th.rawHumidity = data->data.th.hum;				
-	} else {
-		sensor->type = SENSOR_TYPE_WEIGHT;
-		sensor->data.w.rawWeight = data->data.w.weight;
+	const uint8_t type = data->flags & BEE_EYE_METRIC_TYPE_MASK;
+	const uint8_t freq_unit = data->flags & BEE_EYE_TIMER_RESOLUTION_MASK;
+	
+	sensor->type = type;
+	_Static_assert(sizeof(sensor->data) == sizeof(data->data));
+	memcpy(&sensor->data, &data->data, sizeof(sensor->data));
+
+	uint32_t next_trans = data->nextTransmission;
+
+	// convert to ms
+	switch (freq_unit) {
+	case BEE_EYE_TIMER_64HZ:
+		next_trans = ((uint64_t)next_trans) * 15625 / 1000;
+		break;
+	case BEE_EYE_TIMER_1HZ:
+		next_trans = next_trans * 1000;
+		break;
+	case BEE_EYE_TIMER_100HZ:
+		next_trans = next_trans * 10;
+		break;
+	case BEE_EYE_TIMER_1000HZ:
+	default:
+		break;
 	}
-	sensor->nextAnnounce = sensor->lastReceive + data->nextAnnounce;
+
+	sensor->nextAnnounce = sensor->lastReceive + next_trans;
+
+
+	
+
+	LOG_INF("SNS next = %u (%ums)", data->nextTransmission, next_trans);
 }
 
 static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_simple *buf)
@@ -108,7 +122,7 @@ static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_si
 
     if (strncmp(announceData.name, "BeeEye_", 7) != 0) return;
 	uint16_t magic = announceData.sensorData.magic;
-	if (magic != MAGIC_BEYE_TEMPHUM && magic != MAGIC_BEYE_WEIGHT) return;
+	if (magic != BEE_EYE_MAGIC) return;
 	LOG_DBG("SID=%u adv_type=0x%X props=0x%X addr_type=%d, addr=%02X%02X%02X_%02X%02X%02X",
        info->sid, info->adv_type, info->adv_props, info->addr->type
 				, info->addr->a.val[5]
@@ -120,10 +134,10 @@ static void scan_recv(const struct bt_le_scan_recv_info *info, struct net_buf_si
 
 	++ble_measure_count;
 
-	LOG_DBG("Sensor %s, magic %04x, next %dms", 
+	LOG_DBG("Sensor %s, flags %02x, next %d", 
 		announceData.name, 
-		announceData.sensorData.magic, 		
-		sys_le32_to_cpu(announceData.sensorData.nextAnnounce));
+		announceData.sensorData.flags, 		
+		sys_le32_to_cpu(announceData.sensorData.nextTransmission));
 
 	for(int i=0;i<num_sensors;++i) {
 		if(memcmp(sensors[i].address, info->addr->a.val, 6) == 0) {			

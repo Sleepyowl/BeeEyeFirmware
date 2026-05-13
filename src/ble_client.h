@@ -4,6 +4,7 @@
 
 #define SENSOR_TYPE_TEMPHUM 0
 #define SENSOR_TYPE_WEIGHT 1
+#define SENSOR_TYPE_UNKNOWN 0xFF
 
 struct Sensor {
 	uint64_t	lastReceive;
@@ -19,6 +20,7 @@ struct Sensor {
 			int32_t rawWeight;
 		} w;
 	} data;	
+	uint16_t    rawBattery;
 	uint64_t	nextAnnounce;
 };
 
