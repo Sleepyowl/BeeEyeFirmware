@@ -21,14 +21,11 @@ LOG_MODULE_REGISTER(app_main, LOG_LEVEL_DBG);
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 static const struct gpio_dt_spec pair_button = GPIO_DT_SPEC_GET(DT_NODELABEL(pair_button), gpios);
 
-#define MAX_MEASURES 8
-struct Measure measures[MAX_MEASURES];
-
 static atomic_t pairing_mode = ATOMIC_INIT(1);
 static k_tid_t main_thread_tid = NULL;
 static struct gpio_callback pair_button_cb;
 
-static void fillMeasureFromSensor(struct Measure* measure, struct Sensor* sensor);
+void fillMeasureFromSensor(struct Measure* measure, struct Sensor* sensor);
 void fillMeasureFromSensorBat(struct Measure* measure, struct Sensor* sensor);
 void transmitSensorData(uint64_t cutoff);
 static uint8_t battery_addr_suffix[6];
@@ -230,31 +227,36 @@ static void pair_button_isr(const struct device *dev, struct gpio_callback *cb, 
 	}
 }
 
-static void flush_measures(uint8_t *count, uint8_t *total)
+#define MAX_MEASURES 8
+struct Measure measures[MAX_MEASURES];
+static uint8_t measure_count = 0;
+static uint8_t total_measure_count = 0;
+static void flush_measures(void)
 {
-	if (*count == 0) return;
-	assert(*count <= MAX_MEASURES);
+	if (measure_count == 0) return;
+	__ASSERT(measure_count <= MAX_MEASURES, "measure_count overflow");
 
-	LOG_INF("Sending %d measures", *count);
-	lora_transmit_measures(measures, *count);
-	*total += *count;
-	*count = 0;
+	LOG_INF("Sending %d measures", measure_count);
+	lora_transmit_measures(measures, measure_count);
+	measure_count = 0;
 }
 
-static struct Measure *alloc_measure(uint8_t *count, uint8_t *total)
+static struct Measure *alloc_measure(void)
 {
-	if (*count == MAX_MEASURES) {
-		flush_measures(count, total);
+	if (measure_count == MAX_MEASURES) {
+		flush_measures();
 	}
 
-	return &measures[(*count)++];
+	++total_measure_count;
+	return &measures[measure_count++];
 }
 
 void transmitSensorData(uint64_t cutoff)
 {
 	int ret;
-	uint8_t total_measures = 0;
-	uint8_t batch_count = 0;
+
+	measure_count = 0;
+	total_measure_count = 0;
 
 	// Iterate over BLE sensors
 	for (int i = 0; i < ble_get_sensor_count(); ++i) {
@@ -262,20 +264,17 @@ void transmitSensorData(uint64_t cutoff)
 
 		if (sensor->lastReceive < cutoff) continue;
 
-		fillMeasureFromSensor(alloc_measure(&batch_count, &total_measures),
-			sensor);
+		fillMeasureFromSensor(alloc_measure(), sensor);
 
 		if (!sensor->rawBattery) continue;
 		
-		fillMeasureFromSensorBat(alloc_measure(&batch_count, &total_measures),
-			sensor);
+		fillMeasureFromSensorBat(alloc_measure(), sensor);
 	}
 
 	// Iterate over 1Wire sensors
 	enum_w1();
 	for (int i = 0; i < get_w1_device_count(); ++i) {
-		struct Measure *measure =
-			alloc_measure(&batch_count, &total_measures);
+		struct Measure *measure = alloc_measure();
 
 		measure->type = BEE_EYE_MEASURE_TYPE_TEMPERATURE;
 		measure->data.th.tempC = read_temp(i);
@@ -290,7 +289,7 @@ void transmitSensorData(uint64_t cutoff)
 	if (ret) {
 		LOG_ERR("Couldn't get battery voltage %d", ret);
 	} else {
-		struct Measure *measure = alloc_measure(&batch_count, &total_measures);
+		struct Measure *measure = alloc_measure();
 
 		measure->type = BEE_EYE_MEASURE_TYPE_BATTERY;
 		measure->sensorAddress[0] = 'B';
@@ -302,9 +301,9 @@ void transmitSensorData(uint64_t cutoff)
 	}
 
 	// Flush the reminder
-	flush_measures(&batch_count, &total_measures);
+	flush_measures();
 
-	LOG_INF("Sent total of %d measures", total_measures);
+	LOG_INF("Sent total of %d measures", total_measure_count);
 }
 
 void fillMeasureFromSensor(struct Measure* measure, struct Sensor* sensor) {

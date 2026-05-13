@@ -107,9 +107,7 @@ static void update_sensor(struct Sensor *sensor, const struct ManufacturerData *
 	}
 
 	sensor->nextAnnounce = sensor->lastReceive + next_trans;
-
-
-	
+	sensor->rawBattery = data->batteryMilliVolt;
 
 	LOG_INF("SNS next = %u (%ums)", data->nextTransmission, next_trans);
 }
