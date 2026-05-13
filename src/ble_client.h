@@ -2,11 +2,25 @@
 
 #include <stdint.h>
 
+#define SENSOR_TYPE_TEMPHUM 0
+#define SENSOR_TYPE_WEIGHT 1
+#define SENSOR_TYPE_UNKNOWN 0xFF
+
 struct Sensor {
 	uint64_t	lastReceive;
 	uint8_t		address[6];
-	uint16_t	rawTemperature;
-	uint16_t	rawHumidity;
+	uint8_t		type;
+	union {
+		struct {
+			int16_t rawTemperature;
+			int16_t rawHumidity;
+		} th;
+
+		struct {
+			int32_t rawWeight;
+		} w;
+	} data;	
+	uint16_t    rawBattery;
 	uint64_t	nextAnnounce;
 };
 

@@ -2,7 +2,7 @@
 
 #include <stdint.h>
 
-#define PROTOCOL_VERSION 2
+#define PROTOCOL_VERSION 3
 
 #pragma pack(push, 1)
 
@@ -11,18 +11,26 @@
 #define BEE_EYE_MEASURE_TYPE_BATTERY 0u
 #define BEE_EYE_MEASURE_TYPE_TEMPERATURE 1u
 #define BEE_EYE_MEASURE_TYPE_TEMPHUM 2u
+#define BEE_EYE_MEASURE_TYPE_WEIGHT 3u
 
 /// @brief Sensor measure
 struct Measure {   
     uint8_t         type; 
     uint8_t         sensorAddress[8];
     union {
-        uint16_t        mV;
-        float           tempC;        
-    } _data1;
-    union {
-        float           hum;        
-    } _data2;
+        struct __attribute__((packed)) {
+            float tempC;
+            float hum;
+        } th;
+
+        struct __attribute__((packed)) {
+            float weight;
+        } w;
+
+        struct __attribute__((packed)) {
+            uint16_t mV;
+        } bat;
+    } data;
 }; 
 
 /// @brief Message header
